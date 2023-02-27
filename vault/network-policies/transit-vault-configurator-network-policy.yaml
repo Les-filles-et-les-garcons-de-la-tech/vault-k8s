@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: transit-vault-configurator-network-policy
+  namespace: transit-vault
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: vault-configurator
+  policyTypes:
+  - Ingress
+  - Egress
+
+  egress:
+  # Allow internal communication in the HA cluster's vaults
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: transit-vault
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: vault
+    ports:
+    - protocol: TCP
+      port: 8200

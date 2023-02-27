@@ -1,0 +1,139 @@
+---
+apiVersion: "vault.banzaicloud.com/v1alpha1"
+kind: "Vault"
+metadata:
+  name: transit-vault
+  namespace: transit-vault
+spec:
+  size: 1
+  image: vault:1.11.5
+
+  # Specify the ServiceAccount where the Vault Pod and the Bank-Vaults
+  # configurer/unsealer will be running
+  serviceAccount: vault
+  # Security Configuration for pods/containers
+  securityContext:
+        runAsUser: 100
+        runAsGroup: 1000
+        fsGroup: 1000
+        runAsNonRoot: true
+  vaultContainerSpec:
+    name: vault
+    securityContext:
+      readOnlyRootFilesystem: true
+  vaultEnvsConfig:
+    - name: SKIP_CHOWN
+      value: "true"
+    - name: SKIP_SETCAP
+      value: "false"
+    - name: VAULT_DISABLE_MLOCK
+      value: "true"
+  # Unsealing will be done via Kubernetes Secrets if not defined otherwise,
+  # not highly secure, but this is just an example, in production, please
+  # use one of the KMS based unseal options.
+  unsealConfig:
+    options:
+      # The preFlightChecks flag enables unseal and root token storage tests
+      # This is true by default
+      preFlightChecks: true
+      # The storeRootToken flag enables storing of root token in chosen storage
+      # This is true by default
+      storeRootToken: true
+    kubernetes:
+      secretNamespace: transit-vault
+
+  # A YAML representation of a final Vault config file, this will be mounted
+  # to the Vault container directly.
+  # {{ Go .Templates | can | be | used }}
+  config:
+    storage:
+      file:
+        path: /vault/file
+    listener:
+      tcp:
+        address: "0.0.0.0:8200"
+        tls_cert_file: /vault/tls/server.crt
+        tls_key_file: /vault/tls/server.key
+    log_format: "json"
+    telemetry:
+      statsd_address: localhost:9125
+      prometheus_retention_time: "30s"
+      disable_hostname: true
+      enable_hostname_label: true
+    api_addr: https://transit-vault.transit-vault:8200
+    cluster_addr: "https://${.Env.POD_NAME}:8201"
+    ui: true
+
+  # This is how the Bank-Vaults configurer should configure Vault to enable the
+  # transit auto-unseal flow for the tenant instance.
+  # The automated version of:
+  # https://learn.hashicorp.com/vault/operations/autounseal-transit#cli-command
+  externalConfig:
+    # Activate audit logging
+    audit:
+    - type: file
+      path: file
+      description: "Stdout based audit logging device"
+      options:
+        file_path: stdout
+        format: "json"
+    # Configure the transit secret engine and create a key for the auto-unseal
+    secrets:
+      - type: transit
+        path: ha-vault/transit
+        description: Transit engine for the ha-vault
+        configuration:
+          keys:
+            - name: autounseal
+              type: aes256-gcm96
+              exportable: false
+    # The tenant Vault needs to call the transit secret engine endpoints,
+    # create the necessary policies to permit it
+    policies:
+      - name: allow_ha-vault_transit
+        rules: path "ha-vault/transit/encrypt/autounseal" {
+                capabilities = ["update"]
+              }
+              path "ha-vault/transit/decrypt/autounseal" {
+                capabilities = ["update"]
+              }
+    # Instead of creating a token by hand we allow the tenant Vault to request
+    # one with the Kubernetes auth method, via vault-env and vault-secrets-webhook
+    auth:
+      - type: kubernetes
+        path: ha-vault/kubernetes
+        roles:
+          # Allow every pod that uses vault sa in the ha-vault namespace to use
+          # this transit engine
+          - name: ha-vault
+            bound_service_account_names: "vault"
+            bound_service_account_namespaces: "ha-vault"
+            policies: allow_ha-vault_transit
+            ttl: 1m
+  # Instruct the vault-operator to distribute the CA certificate of the central
+  # Vault instance into other namespaces as well, this way a secure TLS connection
+  # can be built up between the tenant and central Vault instances
+  caNamespaces:
+    - "transit-vault"
+    - "ha-vault"
+    - "cert-manager"
+  # Request and mount a Persistent Volume to this Vault instance
+  volumes:
+    - name: vault-file
+      persistentVolumeClaim:
+        claimName: vault-file
+  volumeMounts:
+    - name: vault-file
+      mountPath: /vault/file
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vault-file
+  namespace: transit-vault
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 500Mi

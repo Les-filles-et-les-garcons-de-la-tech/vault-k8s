@@ -1,0 +1,77 @@
+apiVersion: crd.projectcalico.org/v1
+kind: NetworkPolicy
+metadata:
+  name: namespace-hardening-vault-operator
+  namespace: vault-operator
+spec:
+  selector: all()
+  types:
+  - Egress
+
+  egress:
+  # Allow to use the kubernetes api server
+  - action: Allow
+    destination:
+      services:
+        name: kubernetes
+        namespace: default
+  # Allow to use the kubernetes dns server
+  - action: Allow
+    destination:
+      services:
+        name: kube-dns
+        namespace: kube-system
+
+---
+
+apiVersion: crd.projectcalico.org/v1
+kind: NetworkPolicy
+metadata:
+  name: namespace-hardening-ha-vault
+  namespace: transit-vault
+spec:
+  selector: all()
+  types:
+  - Ingress
+  - Egress
+
+  egress:
+  # Allow to use the kubernetes api server
+  - action: Allow
+    destination:
+      services:
+        name: kubernetes
+        namespace: default
+  # Allow to use the kubernetes dns server
+  - action: Allow
+    destination:
+      services:
+        name: kube-dns
+        namespace: kube-system
+
+---
+
+apiVersion: crd.projectcalico.org/v1
+kind: NetworkPolicy
+metadata:
+  name: namespace-hardening-transit-vault
+  namespace: transit-vault
+spec:
+  selector: all()
+  types:
+  - Ingress
+  - Egress
+
+  egress:
+  # Allow to use the kubernetes api server
+  - action: Allow
+    destination:
+      services:
+        name: kubernetes
+        namespace: default
+  # Allow to use the kubernetes dns server
+  - action: Allow
+    destination:
+      services:
+        name: kube-dns
+        namespace: kube-system

@@ -1,0 +1,69 @@
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: vault-snapshot
+  namespace: ha-vault
+spec:
+  schedule: "00 4 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: vault-snapshot
+          securityContext:
+                runAsUser: 100
+                runAsGroup: 1000
+                fsGroup: 1000
+                runAsNonRoot: true
+          containers:
+          - name: vault-snapshot-cronjob
+            image: bitnami/kubectl:1.24.8-debian-11-r6
+            imagePullPolicy: IfNotPresent
+            command:
+            - /bin/bash
+            - -c
+            - /vault-backup/vault-snapshot-cronjob-script
+            volumeMounts:
+            - name: vault-snapshot
+              mountPath: /vault-backup/vault-snapshot-cronjob-script
+              subPath: vault-snapshot-cronjob-script
+            securityContext:
+              readOnlyRootFilesystem: true
+          restartPolicy: OnFailure
+          volumes:
+          - name: vault-snapshot
+            configMap:
+              name: vault-snapshot-cronjob
+              defaultMode: 0554
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-snapshot-cronjob
+  namespace: ha-vault
+data:
+  vault-snapshot-cronjob-script: |
+    #!/bin/bash
+    pods="$(kubectl get pods -n transit-vault| grep 'ha-vault-[0-9]'| awk '{print$1}')"
+    for i in $pods
+        do 
+            HA_VAULT="$(kubectl exec $i -c vault -n transit-vault -- sh -c "\
+            VAULT_ADDR=https://127.0.0.1:8200 && VAULT_SKIP_VERIFY=true && \
+            vault status |grep 'HA Cluster'"|awk -F'[/:]+' '{print $2}')"
+            HA_CLUSTER="$HA_CLUSTER$HA_VAULT\\n"
+        done
+    HA_LEADER="$(echo -e $HA_CLUSTER | uniq -c| grep -E '5|4|3' | awk '{print $1}')"
+    if [[ "${HA_LEADER}" -ge 3 ]];then
+        HA_LEADER=$(echo -e $HA_CLUSTER | uniq -cd| awk '{print $2}')
+        kubectl exec $HA_LEADER -c vault -n transit-vault -- run-parts /vault/backup
+        if [ $? -eq 0 ]; then
+            echo "Cronjob-$(date +"%Y/%m/%d-%H:%M") SUCCESSFULY launched backup script on $HA_LEADER"   
+        else
+            echo "Cronjob-$(date +"%Y/%m/%d-%H:%M") FAILED to launch backup script on $HA_LEADER"
+            exit 1
+        fi
+    else
+        echo "No vault leader available. Make sure Vault is up & running." 
+        exit 1 
+    fi

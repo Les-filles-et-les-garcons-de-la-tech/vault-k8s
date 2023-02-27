@@ -1,0 +1,509 @@
+---
+apiVersion: "vault.banzaicloud.com/v1alpha1"
+kind: "Vault"
+metadata:
+  name: "ha-vault"
+  namespace: ha-vault
+spec:
+  size: 5
+  image: vault:1.11.5
+  # Specify the ServiceAccount where the Vault Pod and the Bank-Vaults
+  # configurer/unsealer will be running
+  serviceAccount: vault
+  securityContext:
+        runAsUser: 100
+        runAsGroup: 1000
+        fsGroup: 1000
+        runAsNonRoot: true
+  vaultContainerSpec:
+    name: vault 
+    securityContext:
+      readOnlyRootFilesystem: true
+  vaultEnvsConfig:
+  # The VAULT_TOKEN environment variable will be read by Vault to login
+  # for unsealing, the "vault:" special prefix instructs the webhook to
+  # mutate the Pod and pass in  variable directly to the process with
+  # vault-env.
+    - name: VAULT_TOKEN
+      value: "vault:login"
+    - name: SKIP_CHOWN
+      value: "true"
+    - name: SKIP_SETCAP
+      value: "false"
+    - name: VAULT_DISABLE_MLOCK
+      value: "true"
+    - name: VAULT_LOG_LEVEL
+      value: debug
+  # Even if unsealing will be done via the Transit Auto-Unseal flow the root token
+  # and recovery keys will be stored in Kubernetes Secrets if not defined otherwise,
+  # not highly secure, but this is just an example, in production please use one of
+  # the KMS based options.
+  unsealConfig:
+    options:
+      # The preFlightChecks flag enables unseal and root token storage tests
+      # This is true by default
+      preFlightChecks: false
+      # The storeRootToken flag enables storing of root token in chosen storage
+      # This is true by default
+      storeRootToken: true
+    kubernetes:
+      secretNamespace: ha-vault
+  vaultLabels:
+    "app": "vault"
+  # Support for affinity Rules, same as in PodSpec
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app: vault
+          topologyKey: kubernetes.io/hostname
+
+  # This is how the Bank-Vaults configurer should configure Vault to enable the
+  # transit auto-unseal flow for the this instance, the seal stanza is the interesting
+  # part where we connect to the central instance, the token will be injectes.KzGtw76dmS62oU43YxU0ZggHd
+  # by the webhook automatically.
+  # The automated version of:
+  # https://learn.hashicorp.com/vault/operations/autounseal-transit#step-2-configure-auto-unseal-vault-2
+  config:
+    seal:
+      transit:
+        address: "https://transit-vault.transit-vault:8200"
+        # token: will be injected via the webhook through VAULT_TOKEN="vault:login"
+        key_name: autounseal
+        mount_path: ha-vault/transit
+        tls_ca_cert: "/transit-vault/tls/ca.crt"
+    storage:
+      raft:
+        path: "/vault/raft"
+    listener:
+      tcp:
+        address: "0.0.0.0:8200"
+        tls_cert_file: /vault/tls/server.crt
+        tls_key_file: /vault/tls/server.key
+    log_format: "json"
+    telemetry:
+      statsd_address: localhost:9125
+      prometheus_retention_time: "30s"
+      disable_hostname: true
+      enable_hostname_label: true
+    api_addr: https://ha-vault.ha-vault:8200
+    cluster_addr: "https://${.Env.POD_NAME}:8201"
+    ui: true
+  externalConfig:
+    # Activate audit logging
+    audit:
+    - type: file
+      path: file
+      description: "Stdout based audit logging device"
+      options:
+        file_path: stdout
+        format: "json"
+    policies:
+      - name: admin_policy
+        rules: path "sys/ha-status" {
+            capabilities = [ "read" ]
+          }
+          path "auth/*" {
+            capabilities = ["create", "read", "update", "delete", "list"]
+          }
+          path "sys/auth/*" {
+            capabilities = ["create", "update", "delete", "sudo"]
+          }
+          path "sys/auth" {
+            capabilities = ["read"]
+          }
+          path "sys/mounts/*" {
+            capabilities = ["create", "read", "update", "delete", "list"]
+          }
+          path "sys/mounts" {
+            capabilities = ["read"]
+          }
+          path "sys/capabilities" {
+            capabilities = ["create", "update"]
+          }
+          path "sys/capabilities-accessor" {
+            capabilities = ["create", "update"]
+          }
+          path "sys/capabilities-self" {
+            capabilities = ["create", "update"]
+          }
+          path "sys/audit" {
+            capabilities = ["read", "list", "sudo" ]
+          }
+          path "sys/audit/*" {
+            capabilities = ["create", "read", "update", "delete", "list", "sudo"]
+          }
+          path "sys/audit-hash" {
+            capabilities = [ "deny" ]
+          }
+          path "sys/audit-hash/*" {
+            capabilities = [ "deny" ]
+          }
+          path "sys/config/*" {
+            capabilities = [ "read", "list", "update", "sudo" ]
+          }
+          path "sys/config/reload" {
+            capabilities = [ "deny" ]
+          }
+          path "sys/generate-root" {
+            capabilities = [ "deny" ]
+          }
+          path "sys/generate-root/*" {
+            capabilities = [ "deny" ]
+          }
+          path "sys/health" {
+            capabilities = [ "read" ]
+          }
+          path "sys/host-info" {
+            capabilities = [ "read" ]
+          }
+          path "sys/init" {
+            capabilities = [ "deny" ]
+          }
+          path "sys/internal/*" {
+            capabilities = [ "read" ]
+          }
+          path "sys/key-status" {
+            capabilities = [ "read" ]
+          }
+          path "sys/leader" {
+            capabilities = [ "read" ]
+          }
+          path "sys/leases/*" {
+            capabilities = ["create", "read", "update", "delete", "list", "sudo"]
+          }
+          path "sys/metrics" {
+            capabilities = [ "read" ]
+          }
+          path "sys/mfa" {
+            capabilities = [ "deny" ]
+          }
+          path "sys/monitor" {
+            capabilities = [ "read" ]
+          }
+          path "sys/plugins/reload/backend" {
+            capabilities = ["read", "update"]
+          }
+          path "sys/plugins/catalog" {
+            capabilities = ["read"]
+          }
+          path "sys/policy" {
+            capabilities = ["read","list"]
+          }
+          path "sys/policy/*" {
+            capabilities = [ "read" ]
+          }
+          path "sys/policies" {
+            capabilities = ["read","list"]
+          }
+          path "sys/policies/*" {
+            capabilities = [ "read", "list"]
+          }
+          path "sys/pprof" {
+            capabilities = [ "read", "list"]
+          }
+          path "sys/pprof/*" {
+            capabilities = [ "read", "list"]
+          }
+          path "sys/quotas" {
+            capabilities = [ "read", "list"]
+          }
+          path "sys/quotas/*" {
+            capabilities = [ "read", "list", "create", "update", "delete" ]
+          }
+          path "sys/raw" {
+            capabilities = [ "deny" ]
+          }
+          path "sys/raw/*" {
+            capabilities = [ "deny" ]
+          }
+          path "sys/rekey" {
+            capabilities = [ "deny" ]
+          }
+          path "sys/rekey/*" {
+            capabilities = [ "deny" ]
+          }
+          path "sys/rekey-recovery-key" {
+            capabilities = [ "deny" ]
+          }
+          path "sys/rekey-recovery-key/*" {
+            capabilities = [ "deny" ]
+          }
+          path "sys/remount" {
+            capabilities = [ "deny" ]
+          }
+          path "sys/rotate" {
+            capabilities = [ "read", "update", "sudo" ]
+          }
+          path "sys/rotate/config" {
+            capabilities = [ "read", "update", "sudo" ]
+          }
+          path "sys/seal" {
+            capabilities = [ "read", "update", "sudo" ]
+          }
+          path "sys/seal-status" {
+            capabilities = [ "read" ]
+          }
+          path "sys/step-down" {
+            capabilities = [ "read", "update", "sudo" ]
+          }
+          path "sys/storage/raft" {
+            capabilities = [ "read", "create", "update", "delete", "list", "sudo" ]
+          }
+          path "sys/storage/raft/*" {
+            capabilities = [ "read", "create", "update", "delete", "list", "sudo" ]
+          }
+          path "sys/tools" {
+            capabilities = [ "read", "list" ]
+          }
+          path "sys/tools/*" {
+            capabilities = [ "read", "update", "list" ]
+          }
+          path "sys/unseal" {
+            capabilities = [ "read", "update", "sudo" ]
+          }
+          path "sys/wrapping/*" {
+            capabilities = [ "read", "list", "update" ]
+          }
+          path "auth/userpass/users" {
+            capabilities = [ "read", "list" ] 
+          }          path "auth/userpass/users/*" {
+            capabilities = [ "read" ] 
+          }
+          path "auth/userpass/users/*" {
+            capabilities = [ "update" ] 
+            allowed_parameters = {
+              "password" = []
+            }
+          }
+          path "auth/approle/role" {
+            capabilities = [ "read", "list" ]
+          }
+          path "auth/approle/role/*" {
+            capabilities = [ "read" ]
+          }
+      - name: operator_policy
+        rules: path "example/metadata/project" {
+            capabilities = [ "list" ]
+          }
+          path "example/metadata/project/*" {
+            capabilities = [ "list", "read" ]
+          }
+          path "example/data/project/*" {
+            capabilities = [ "read", "create", "update" ]
+          }
+          path "auth/userpass/users/operator" {
+            capabilities = [ "read" ]
+          }
+          path "auth/userpass/users/operator" {
+            capabilities = [ "update" ]
+            allowed_parameters = {
+              "password" = []		
+            }
+          }          
+          path "pki_inter/+/example" {
+            capabilities = [ "create", "read", "update", "delete", "list" ]
+          }
+          path "sys/seal" {
+            capabilities = [ "read", "update", "sudo" ]
+          }
+      - name: default_policy
+        rules: path "example/data/project" {
+            capabilities = [ "read" ]
+          }
+      - name: unseal_policy
+        rules: path "transit/encrypt/unseal_key" {
+            capabilities = [ "update" ]
+          }
+          path "transit/decrypt/unseal_key" {
+            capabilities = [ "update" ]
+          }
+      - name: allow_snapshot
+        rules: path "/sys/storage/raft/snapshot" {
+          capabilities = ["read", "update"]	
+          }
+      - name: pki_inter
+        rules: path "pki_inter/*" { 
+          capabilities = ["read", "list"] 
+          }          
+          path "pki_inter/sign/vault-issuer" { 
+            capabilities = ["create", "update"] 
+          }          
+          path "pki_inter/issue/vault-issuer" { 
+            capabilities = ["create"] 
+          }
+      - name: elastic_view
+        rules: path "/sys/metrics" {
+            capabilities = ["read"]
+          }
+
+#------------------------------------------------------
+    # Allow every pod in the application namespace to use the secret kv store
+    auth:
+      - type: kubernetes
+        path: app/kubernetes
+        roles:
+          - name: app
+            bound_service_account_names: "default"
+            bound_service_account_namespaces: "app"
+            policies: allow_aws_secret
+            ttl: 1h
+    # Allow every pod in the ha-vault namespace to use snapshot
+      - type: kubernetes
+        path: snapshot/kubernetes
+        roles:
+          - name: snapshot
+            bound_service_account_names: "vault"
+            bound_service_account_namespaces: "ha-vault"
+            policies: allow_snapshot
+            ttl: 1h
+      - type: kubernetes
+        path: vault-issuer/kubernetes
+        roles:
+          - name: vault-issuer
+            bound_service_account_names: "vault-issuer"
+            bound_service_account_namespaces: "cert-manager"
+            policies: pki_inter
+            ttl: 1h
+      - type: ldap
+        description: LDAP directory auth.
+        path: example-ldap
+        # add mount options
+        # See https://www.vaultproject.io/api/system/auth.html#config for more
+        # information.
+        options:
+          listing_visibility: "unauth"
+        config:
+          url: "ldap://<ldap-server-address>:389"
+          binddn: "cn=admin,dc=example,dc=org"
+          bindpass: "admin"
+          userattr: "cn"
+          userdn: "ou=users,dc=example,dc=org"
+          groupdn: "ou=groups,dc=example,dc=org"
+          groupattr: "memberOf"
+          insecure_tls: true
+        groups:
+          vault-admin:
+            policies: admin_policy
+      - type: approle
+        roles:
+        - name: elastic_view
+          policies: elastic_view
+          secret_id_ttl: 10m
+          token_num_uses: 10
+          token_ttl: 186d
+          token_max_ttl: 186d
+          secret_id_num_uses: 40
+    secrets:
+      - path: secret
+        type: kv
+        description: General secrets.
+        options:
+          version: 2
+      - type: pki
+        description: Vault PKI Backend
+        path: pki_inter
+        config:
+          default_lease_ttl: 2m
+          max_lease_ttl: 5m
+        configuration:
+          config:
+          - name: urls
+            issuing_certificates: https://ha-vault.ha-vault:8200/v1/pki/ca
+            crl_distribution_points: https://ha-vault.ha-vault:8200/v1/pki/crl
+          roles:
+          - name: vault-issuer
+            allowed_domains: 
+            allow_subdomains: true
+            generate_lease: true
+            ttl: 30d
+            max_ttl: 180d
+  # vault-env from the above block needs some information to know how
+  # to login into Vault with the Kubernetes auth method, and where to
+  # find the TLS CA certificate for it. Since the operator was asked
+  # to distribute the CA of transit-vault instance to other namespaces
+  # with `caNamespaces:` it will find in the "transit-vault-tls" Secrets.
+  # This will be mounted automatically by the webhook into the Pod.
+  vaultAnnotations:
+    vault.security.banzaicloud.io/vault-addr: https://transit-vault.transit-vault:8200
+    vault.security.banzaicloud.io/vault-role: ha-vault
+    vault.security.banzaicloud.io/vault-path: ha-vault/kubernetes
+    vault.security.banzaicloud.io/vault-tls-secret: "transit-vault-tls"
+  # Persistence done in the same way as for transit-vault
+  volumes:
+    - name: vault-raft
+      persistentVolumeClaim:
+        claimName: vault-raft 
+    - name: transit-vault-tls
+      secret:
+        secretName: transit-vault-tls
+    - name: vault-snapshot
+      configMap:
+        name: vault-snapshot
+        defaultMode: 0554
+  volumeMounts:
+    - name: vault-raft
+      mountPath: /vault/raft
+    - name: transit-vault-tls
+      mountPath: /transit-vault/tls
+    - name: vault-snapshot
+      mountPath: /vault/backup/vault-snapshot-script
+      subPath: vault-snapshot-script
+  volumeClaimTemplates:
+    - metadata:
+        name: vault-raft
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 500Mi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-snapshot
+  namespace: ha-vault
+data:
+  vault-snapshot-script: |
+    #!/bin/sh
+    echo "=====================Vault Snapshot-$(date +"%Y/%m/%d-%H:%M")- START=====================" >> /vault/logs/snapshot.log
+    VAULT_ADDR=https://127.0.0.1:8200; 
+    VAULT_SKIP_VERIFY=true;
+    JWT="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)"
+    VAULT_TOKEN=$(vault write auth/snapshot/kubernetes/login role=snapshot jwt=$JWT| grep 'token '| awk '{print $2}')
+    vault login --no-store $VAULT_TOKEN &> /dev/null
+    vault operator raft snapshot save /vault/raft//raft/snapshots/backup-$(date +"%Y_%m_%d_%H_%M").snap 2> /vault/logs/snapshot-cmd.log
+    if test "$?" != 0 ; then
+        echo "vault Snapshot-$(date +"%Y/%m/%d-%H:%M") command FAILED, please check the log at /vault/logs/snapshot-cmd.log " >> /vault/logs/snapshot.log
+        echo "=====================Vault Snapshot-END==============================================" >> /vault/logs/snapshot.log
+        echo "" >> /vault/logs/snapshot.log
+        exit 1
+    else
+        echo "vault Snapshot-$(date +"%Y/%m/%d-%H:%M") command SUCCEEDED" >>/vault/logs/snapshot.log
+        echo "=====================Vault Snapshot-END==============================================" >> /vault/logs/snapshot.log
+        echo "" >> /vault/logs/snapshot.log
+    fi
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: vault-ingress
+  namespace: ha-vault
+spec:
+  rules:
+  - host: vault.example.com
+    http:
+      paths:
+      - backend:
+          service:
+            name: ha-vault
+            port:
+              number: 8200
+        path: /
+        pathType: Prefix
+  tls:
+  - hosts:
+      - vault.example.com
+    secretName: vault-example-tls

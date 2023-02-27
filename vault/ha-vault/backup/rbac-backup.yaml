@@ -1,0 +1,33 @@
+---
+kind: ServiceAccount
+apiVersion: v1
+metadata:
+  name: vault-snapshot
+  namespace: ha-vault
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: ha-vault
+  name: pods-exec
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/log"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["pods/exec"]
+  verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: vault-snapshot
+  namespace: ha-vault
+subjects:
+- kind: ServiceAccount
+  name: vault-snapshot
+  namespace: ha-vault
+roleRef:
+  kind: Role
+  name: pods-exec
+  apiGroup: rbac.authorization.k8s.io

@@ -1,0 +1,14 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: vault-example-tls
+  namespace: ha-vault
+spec:
+  secretName: vault-example-tls
+  renewBefore: 5m
+  issuerRef:
+    name: vault-issuer
+    kind: ClusterIssuer
+  commonName: vault.example.com
+  dnsNames:
+  - vault.example.com

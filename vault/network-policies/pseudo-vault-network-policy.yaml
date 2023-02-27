@@ -1,0 +1,76 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ha-vault-network-policy
+  namespace: transit-vault
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: vault
+  policyTypes:
+  - Ingress
+  - Egress
+
+  ingress:
+  - from:
+    # Allow communication between HA cluster and transit vault
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: transit-vault
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: vault
+    # Allow configuration by the operator
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: transit-vault
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: vault-configurator
+    # Communication between HA cluster's vaults and their client apps (in kubernetes)
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          vault_access: "true"
+    ports:
+    - protocol: TCP
+      port: 8200
+  # Allow internal communication in the HA cluster's vaults
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: transit-vault
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: vault
+    ports:
+    - protocol: TCP
+      port: 8200
+    - protocol: TCP
+      port: 8201
+
+  egress:
+  # Allow communication between HA cluster and transit vault
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: transit-vault
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: vault
+    ports:
+    - protocol: TCP
+      port: 8200
+  # Allow internal communication in the HA cluster's vaults
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: transit-vault
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: vault
+    ports:
+    - protocol: TCP
+      port: 8200
+    - protocol: TCP
+      port: 8201
